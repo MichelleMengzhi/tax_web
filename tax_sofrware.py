@@ -62,14 +62,19 @@ def find_lineage(parent_id, db):
     '''
     terminate_flag = 0
     name = ''
+    new_parent_id = db[parent_id]['parent_tax_id'] # Save the parent id for the current taxid
     if db[parent_id]['rank'].lower().strip() == 'superkingdom':
         terminate_flag = 1
-    for tax_id, infor in db.items():
-        if tax_id == parent_id:
-            for nameClass, nameText in infor['names'].items():
-                if nameClass.replace(' ', '').lower() == 'scientificname':
-                    name = nameText[0]
-                    new_parent_id = db[tax_id]['parent_tax_id']
+    if db[parent_id]['GenBank_hidden_flag'] != '1': # Only if GenBank hidden flag is 0 , the taxid will be added into the lineage
+        for tax_id, infor in db.items():
+            if tax_id == parent_id:
+                for nameClass, nameText in infor['names'].items():
+                    if nameClass.replace(' ', '').lower() == 'scientificname':
+                        name = nameText[0] # Find the scientific name of the given taxid
+                        break
+                break
+    
+    
     return name, new_parent_id, terminate_flag 
 
 
@@ -95,7 +100,8 @@ def lineage_generator(parent_id, db):
     new_parent_id = parent_id
     while terminate_flag != 1: # loop until the current parent id's rank is the highest
         current_name, new_parent_id, terminate_flag = find_lineage(new_parent_id, db)
-        result  = current_name + '; ' + result
+        if current_name != '':
+            result  = current_name + '; ' + result
     return result
     
      
@@ -116,7 +122,6 @@ def taxonomy_dic_generator(taxid, db):
         The taxon path of given tax id.
 
     '''
-    parent_id = db[taxid]['parent_tax_id']
     
     # Get the raxon path from the information from the database (db)
     result = {}
@@ -128,14 +133,19 @@ def taxonomy_dic_generator(taxid, db):
     elif 'common name' in db[taxid]['names']:
         result['commonName'] = db[taxid]['names']['common name'][0]
         result['formalName'] = 'false'
+    else: # neither genebank bommon name or common name is there
+        result['formalName'] = 'false'
     result['rank'] = db[taxid]['rank']
     result['division'] = db[taxid]['division']
-    result['lineage'] = lineage_generator(parent_id, db)
+    result['lineage'] = lineage_generator(taxid, db)
     result['geneticCode'] = db[taxid]['geneticCode']
     result['mitochondrialGeneticCode'] = db[taxid]['mitochondrialGeneticCode']
-    result['submittable'] = ''
+    if result['rank'] == 'species':
+        result['submittable'] = 'true'
+    else:
+        result['submittable'] = 'false'
     return result
-    ##### to be added here "submittable"
+
 
 def work_flow(inpt):
     '''
@@ -167,12 +177,12 @@ def work_flow(inpt):
     div_lst = []
     with open('ncbi_tax/div_list', 'r') as div:
         for d in div:
-            div_lst.append(d)
+            div_lst.append(d.strip())
     # Generate genCode names list
     gc_lst = []
     with open('ncbi_tax/gc_list', 'r') as gc:
         for g in gc:
-            gc_lst.append(g)
+            gc_lst.append(g.strip())
             
         
     # Input can be:
@@ -217,10 +227,16 @@ def work_flow(inpt):
             find_id = 0
             for tid, info in db.items():
                 for name_class, name_text in info['names'].items():
-                    if name_text.replace(' ', '').upper() == tax.replace(' ', '').upper(): # indicates the given taxon matches a name in this taxid
-                        find_id = 1
-                        op_taxonomy.append(taxonomy_dic_generator(tax, db))                  
-            if find_id == 1:
+                    for nt in name_text:
+                        if nt.replace(' ', '').upper() == tax.replace(' ', '').upper(): # indicates the given taxon matches a name in this taxid
+                            find_id = 1
+                            op_taxonomy.append(taxonomy_dic_generator(tax, db))  
+                            break 
+                    if find_id == 1:
+                        break
+                if find_id == 1:
+                    break
+            if find_id == 0:
                 print('No match for given taxon '+tax)
                 
     return op_taxonomy
