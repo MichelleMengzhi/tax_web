@@ -63,7 +63,7 @@ def find_lineage(parent_id, db):
     terminate_flag = 0
     name = ''
     new_parent_id = db[parent_id]['parent_tax_id'] # Save the parent id for the current taxid
-    if db[parent_id]['rank'].lower().strip() == 'superkingdom':
+    if db[parent_id]['rank'].lower().strip() == 'superkingdom' or db[parent_id]['rank'].lower().strip() == 'no rank':
         terminate_flag = 1
     if db[parent_id]['GenBank_hidden_flag'] != '1': # Only if GenBank hidden flag is 0 , the taxid will be added into the lineage
         for tax_id, infor in db.items():
@@ -183,6 +183,7 @@ def work_flow(inpt):
     with open('ncbi_tax/gc_list', 'r') as gc:
         for g in gc:
             gc_lst.append(g.strip())
+    # Generate merged taxid dictionary
             
         
     # Input can be:
@@ -195,49 +196,58 @@ def work_flow(inpt):
     
     with open('ncbi_tax/db.json') as dbjson:
         db = json.load(dbjson) # Read database information
+        
     
     op_taxonomy = []
     for tax in ip:
         tax = tax.strip()
         if tax.isdigit(): # indicates the element is a taxid
             if tax in db: # taxid is in the database taxids
-                if db[tax] == {}: # indicates the given taxid does not have corresponding node information, i.e. a deleted taxid
-                    print('Given taxid '+str(tax)+' is deleted, no taxonomy information provided.')
-                else: # indicates the given taxid is not deleted
-                    op_taxonomy.append(taxonomy_dic_generator(tax, db))
+                op_taxonomy.append(taxonomy_dic_generator(tax, db))
+            else: # taxid is not in the database
+                flag = 0
+                with open('ncbi_tax/deletedtaxid', 'r') as deleted:
+                    for line in deleted:
+                        if tax == line.strip(): # indicate taxid is deleted
+                            flag = 1
+                            print('Given taxid '+str(tax)+' is deleted, no taxonomy information provided.')
+                if flag != 1:  # indicate the given taxid is not deleted           
+                    with open('ncbi_tax/merge_dic.json', 'r') as md:
+                        merge_dic = json.load(md)
+                    if tax in merge_dic: # merge case
+                        taxid = merge_dic[tax]
+                        op_taxonomy.append(taxonomy_dic_generator(taxid, db))
+                    else:
+                        print('Given taxid '+str(tax)+' does not exist.')
+                   
         
-        elif tax.upper() in div_lst: # indicate the given taxon is a division
-            if len(tax) != 3:
-                div = div_lst[div_lst.index(tax.upper())-1]
+        elif tax.replace(' ', '').upper() in div_lst: # indicate the given taxon is a division
+            if len(tax) == 3:
+                div = div_lst[div_lst.index(tax.upper())+1]
             else: 
-                div = tax.upper()
-            for tid, info in db.items():
-                if info['division'] == div:
-                    op_taxonomy.append(taxonomy_dic_generator(tid, db))
-            div = ''
+                div = tax.replace(' ','').upper()
+            with open('ncbi_tax/'+div+'.json', 'r') as divd:
+                div_dic = json.load(divd)
+            for k,v in div_dic.items():
+                for i in v:
+                    op_taxonomy.append(taxonomy_dic_generator(i, db))
         
-        elif tax.upper() in gc_lst: # indicate the given taxon is a gene code name
-            gc = gc_lst.index(tax.upper())
-            for tid, info in db.items():
-                if info['geneticCode'] == gc or info['mitochondrialGeneticCode'] == gc: ### To be decided whether should be divided into 2 cases
-                    op_taxonomy.append(taxonomy_dic_generator(tid, db))
-            gc = ''
+        elif tax.replace(' ', '').upper() in gc_lst: # indicate the given taxon is a gene code name
+            with open('ncbi_tax/'+tax.replace(' ', '').upper()+'.json', 'r') as gc:
+                gc_dic = json.load(gc)
+            if len(gc_dic) != 0: # skip the case that the file is empty, i.e there is no coppresonding txid for this gc name              
+                for k,v in gc_dic.items():
+                    for i in v:
+                        op_taxonomy.append(taxonomy_dic_generator(i, db))
                 
         else: # input is a name
-            find_id = 0
-            for tid, info in db.items():
-                for name_class, name_text in info['names'].items():
-                    for nt in name_text:
-                        if nt.replace(' ', '').upper() == tax.replace(' ', '').upper(): # indicates the given taxon matches a name in this taxid
-                            find_id = 1
-                            op_taxonomy.append(taxonomy_dic_generator(tax, db))  
-                            break 
-                    if find_id == 1:
-                        break
-                if find_id == 1:
-                    break
-            if find_id == 0:
-                print('No match for given taxon '+tax)
+            with open('ncbi_tax/names.json', 'r') as njs:
+                names_dic = json.load(njs)
+            if tax.replace(' ', '').upper() in names_dic:
+                taxid = names_dic[tax.replace(' ', '').upper()]
+                op_taxonomy.append(taxonomy_dic_generator(taxid, db))
+            else:
+                print('No match for given taxon '+str(tax))
                 
     return op_taxonomy
 
@@ -259,19 +269,22 @@ def taxon_path_output():
     inpt = request.form['input']
     p=[]
     ti = work_flow(inpt)
-    ct = 1
-    for i in ti:
-        if ct == 1:
-            p.append('<pre>[{')
-        else:
-            p.append('<pre>{')
-        for k,v in i.items():
-            p.append('&nbsp;&nbsp;'+k+' : '+v)
-        if ct < len(ti):
-            p.append('}</pre>')
-        else:
-            p.append('}]</pre>')
-        ct += 1
+    if len(ti) == 0:
+        p.append('<pre>Given input does not have corresponding taxon path<br>This may be caused by: <br>The input taxid is deleted<br>The input taxon does not match any name, division name, or gencode name<br>The input taxon is a gencode name without any corresponding taxon id</pre>')
+    else:
+        ct = 1
+        for i in ti:
+            if ct == 1:
+                p.append('<pre>[{')
+            else:
+                p.append('<pre>{')
+            for k,v in i.items():
+                p.append('&nbsp;&nbsp;'+k+' : '+v)
+            if ct < len(ti):
+                p.append('}</pre>')
+            else:
+                p.append('}]</pre>')
+            ct += 1
     return '\n'.join(p)
 
 if __name__ == '__main__':
